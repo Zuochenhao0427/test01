@@ -21,9 +21,9 @@ ggplot(plt1) +
   geom_histogram(aes(`n`), binwidth = 10) -> p1
 ggplotly(p1) 
 
-## drop na '--' ---> 以累积净值为sample
-df$`周累计净值(元)` = ifelse(df$`周累计净值(元)`=="--", NA, df$`周累计净值(元)`)
-df %>% select(c(1:3), 7) %>% na.omit() -> df1 # 去掉NA一共68000+数据点
+## drop na '--' ---> 以单位净值为sample
+df$`周单位净值(元)` = ifelse(df$`周单位净值(元)`=="--", NA, df$`周单位净值(元)`)
+df %>% select(c(1:3), 6) %>% na.omit() -> df1 # 去掉NA一共68000+数据点
 
 #######################################
 ########### After NA remove ###########
