@@ -48,4 +48,5 @@ ggplot(plt4) +
 ggplotly(p4)
 
 # 导出数据
+df1 %>% arrange(`时间`) -> df1
 write_csv(df1, 'funds_data.csv')
