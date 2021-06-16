@@ -48,4 +48,4 @@ ggplot(plt4) +
 ggplotly(p4)
 
 # 导出数据
-write_csv(df1, '数据已清理.csv')
+write_csv(df1, 'funds_data.csv')
