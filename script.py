@@ -3,13 +3,21 @@
 
 # # 股票数据整理（6.7）
 
-# In[139]:
+# In[56]:
+
+
+# conda install rpy2
+
+
+# In[1]:
 
 
 import pandas as pd
 import numpy as np
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
+import rpy2
+import rpy2.robjects as robjects
 from sklearn.utils import resample
 
 
@@ -45,32 +53,32 @@ from sklearn.utils import resample
 
 # # 数据在模型Kosowski、Fama&French的抽样试验（6.9 - 6.15）
 
-# In[3]:
+# In[2]:
 
 
 # 基金数据导入
 funds = pd.read_csv('funds_data.csv')
 
 
-# In[4]:
+# In[3]:
 
 
 funds.shape
 
 
-# In[5]:
+# In[4]:
 
 
 funds.head(5)
 
 
-# In[6]:
+# In[5]:
 
 
 funds.info()
 
 
-# In[7]:
+# In[6]:
 
 
 # 基金回报率计算
@@ -78,38 +86,38 @@ funds['单位净值(初)']=funds.groupby('代码')['周单位净值(元)'].shift
 funds['净回报率'] = funds['周单位净值(元)']/funds['单位净值(初)'] - 1
 
 
-# In[8]:
+# In[7]:
 
 
 funds.head(10)
 
 
-# In[9]:
+# In[8]:
 
 
 # Cahart模型因子数据导入
 cahart = pd.read_csv('fivefactor_weekly.csv')
 
 
-# In[10]:
+# In[9]:
 
 
 cahart.shape
 
 
-# In[11]:
+# In[10]:
 
 
 cahart.head(5)
 
 
-# In[12]:
+# In[11]:
 
 
 cahart.info()
 
 
-# In[13]:
+# In[12]:
 
 
 # 时间类数据格式调整
@@ -131,7 +139,7 @@ cahart['trdwk'] = pd.to_datetime(cahart['trdwk'], format='%Y-%m-%d')
 
 # #### 合并四因子与基金收益率
 
-# In[14]:
+# In[13]:
 
 
 # 取Cahart模型所需因子：市场风险因子（mkt_rf）、规模风险因子（smb）、账面市值比风险因子（hml）、惯性/动量因子（umd）及无风险利率（rf）
@@ -144,14 +152,14 @@ f = f.rename(columns = {'时间': 'trdwk'})
 cmodel = pd.merge(f, c2, how='left', on='trdwk')
 
 
-# In[15]:
+# In[14]:
 
 
 # 处理缺失值： 用上一个非缺失值填补
 cmodel = cmodel.fillna(method='ffill')
 
 
-# In[16]:
+# In[15]:
 
 
 # 调整合并后数据列名
@@ -159,26 +167,26 @@ cmodel = cmodel.drop(columns = ['周单位净值(元)', '单位净值(初)'])
 cmodel = cmodel.rename(columns = {'代码': 'code', '简称': 'name', '净回报率': 'ri'})
 
 
-# In[17]:
+# In[16]:
 
 
 cmodel.shape
 
 
-# In[18]:
+# In[17]:
 
 
 cmodel.head(5)
 
 
-# In[19]:
+# In[18]:
 
 
 # 查看净值与四因子之间相关性
 corr_dt = cmodel[3:]
 
 
-# In[20]:
+# In[19]:
 
 
 corr_dt.corr()
@@ -190,13 +198,13 @@ corr_dt.corr()
 # 
 # bootstrap对单支基金抽样b次能得到b个伪alpha，抽样n个基金能构成一个n乘以b的alpha分布。
 
-# In[21]:
+# In[22]:
 
 
 funds_list = cmodel.code.unique() # 基金清单
 
 
-# In[22]:
+# In[23]:
 
 
 # 多基金残差计算
@@ -214,7 +222,9 @@ def res_caculator(f):
     return (res, coef) 
 
 
-# In[23]:
+# cmodel.groupby('code').apply(lambda x:)
+
+# In[24]:
 
 
 ########## TEST ###########
@@ -223,7 +233,7 @@ plt1 = res_caculator(funds1)[0]
 coefs = res_caculator(funds1)[1]
 
 
-# In[24]:
+# In[25]:
 
 
 ########## TEST ###########
@@ -240,7 +250,7 @@ ax.plot(funds1.trdwk, funds1.res) # 残差分布在[-0.1, 0.1]之间
 # 
 # #### 残差抽样方程
 
-# In[25]:
+# In[40]:
 
 
 # kosowski模型针对残差的Bootstrap抽样（******* 抽样部分之后要加入最优时序分块和家族分块步骤 ********）
@@ -252,7 +262,16 @@ def k_sampling(res):
     return spl_res
 
 
-# In[26]:
+# In[46]:
+
+
+def k_sampling1(res):
+    # 最优时序分块采样
+    spl_res = robjects.r['tsbootstrap'](res, nb = 500, statistic = mean, m = 1)
+    return spl_res
+
+
+# In[27]:
 
 
 ########## TEST ###########
@@ -260,10 +279,16 @@ plt1_k_sample = k_sampling(plt1)
 plt1_k_sample.shape
 
 
+# In[48]:
+
+
+k_sampling1(plt1)
+
+
 # #### 伪Alpha计算方程
 # 得到回报率伪时间序列后，再通过CahartOLS再次回归，得到该基金伪Alpha
 
-# In[27]:
+# In[28]:
 
 
 # kosowski模型抽样残差进行伪回报及伪alpha计算
@@ -281,7 +306,7 @@ def k_fake_alpha_calculator(res, coef, cahart_factors):
     return (fake_alpha, fake_ta)
 
 
-# In[28]:
+# In[29]:
 
 
 ########## TEST ###########
@@ -297,13 +322,13 @@ k_fake_alpha_calculator(plt1_k_sample, coefs, funds1)
 # 4. 计算1000个Series每个rank(length：328)上的t-test平均数【mean_tfa】
 # 5. 在每个rank上，计算【alpha】在1000个【fk_alpha】构成的【运气alpha分布】上小于其的百分比，记为【%<Act】
 
-# In[29]:
+# In[30]:
 
 
 cmodel.head(10)
 
 
-# In[30]:
+# In[31]:
 
 
 # 第一步：计算所有基金真实Alpha并排序 #
@@ -323,24 +348,10 @@ for fund in funds_list:
     ta.append(ta_i) 
 
 
-# In[31]:
+# In[32]:
 
 
-# 排序
-true_data = {
-    'alpha': alpha,
-    'ta': ta
-}
-t_dt = pd.DataFrame(true_data)
-
-t_dt = t_dt.sort_values(by='alpha', ascending = True).reset_index(drop=True)
-
-
-# In[101]:
-
-
-# 第二步：计算所有基金伪Alpha并排序，记为Series1 #
-# 伪alpha及其t-value数列的排序及整理
+# alpha及其t-value数列的排序及整理方程
 def series_manipulator(alpha, ta):
     # 将两个List合并到一起，按alpha排序
     alpha = np.array(alpha).reshape(len(alpha),1)
@@ -355,14 +366,24 @@ def series_manipulator(alpha, ta):
     return one_fund_list
 
 
-# In[ ]:
+# In[33]:
+
+
+# 排序
+true_alpha_series = series_manipulator(alpha, ta)
+
+
+# # ! **算力不足问题**
+# 目前伪Alpha计算并排序的步骤循环5次大约需要1分钟，20次大约需要4分半，预计如需循环计算1000次需要3~4个小时
+
+# In[42]:
 
 
 # 第三步：重复计算所有基金伪Alpha series并排序 #
 myalphalist = []
 mytalist = []
 
-for b in range(50):
+for b in range(20):
     fk_alpha = []
     fk_ta = [] 
     
@@ -393,135 +414,18 @@ for b in range(50):
     mytalist.append(ta_series_i)
 
 
-# In[168]:
+# In[44]:
 
 
 mat = np.array(myalphalist)
 mat.shape
 
 
-# In[ ]:
+# In[45]:
 
 
+mat[19,:,:]
 
-
-
-# #将每一次计算出来的alpha series和其t-value series分别存贮
-# alpha_series = np.zeros((len(alpha_series_i),1)) 
-# ta_series = np.zeros((len(ta_series_i),1))
-# 
-# alpha_series = np.hstack([alpha_series, alpha_series_i])
-# ta_series = np.hstack([ta_series, ta_series_i])
-# 
-#         one_fund_list = series_manipulator(fk_alpha, fk_ta)
-#         alpha_series_i = one_fund_list[0]
-#         ta_series_i = one_fund_list[1]
-
-# In[36]:
-
-
-# 排序
-series1={
-    'alpha': fk_alpha,
-    'ta': fk_ta
-}
-series1_dt = pd.DataFrame(series1)
-series1_dt = series1_dt.sort_values(by='alpha', ascending = True).reset_index(drop=True)
-
-
-# In[39]:
-
-
-fk_ta1 = series1_dt['ta'].values
-print(type(fk_ta1))
-fk_ta1
-
-
-# In[55]:
-
-
-fk_ta1 = fk_ta1.reshape(328,1)
-
-
-# In[74]:
-
-
-series2={
-    'alpha': fk_alpha,
-    'ta': fk_ta
-}
-series2_dt = pd.DataFrame(series2)
-series2_dt = series2_dt.sort_values(by='alpha', ascending = True).reset_index(drop=True)
-series2_dt.head(5)
-
-
-# In[42]:
-
-
-fk_ta2 = series2_dt['ta'].values
-print(type(fk_ta2))
-fk_ta2
-
-
-# In[54]:
-
-
-fk_ta2 = fk_ta2.reshape(328,1)
-
-
-# In[85]:
-
-
-tmp = np.hstack([fk_ta1, fk_ta2])
-np.hsplit(tmp,2)[0]
-
-
-# In[65]:
-
-
-np.hstack([fk_ta1, fk_ta2]).mean(axis = 1)
-
-
-# In[102]:
-
-
-print(fk_alpha[:5])
-print(fk_ta[:5])
-
-
-# In[107]:
-
-
-series_manipulator(fk_alpha,fk_ta)[0][:5]
-
-
-# In[76]:
-
-
-tmpa = np.array(fk_alpha).reshape(328,1)
-tmpta = np.array(fk_ta).reshape(328,1)
-t = np.hstack([tmpa,tmpta])
-t = t[np.argsort(t[:,0]),:]
-t[:5]
-
-
-# In[115]:
-
-
-
-
-
-# In[116]:
-
-
-
-
-
-# fig = plt.figure()  
-# ax = fig.add_subplot(111)
-# ax.hist(fake_alpha_onefirm)
-
-# ## Fama&French模型 （6.15）
 
 # In[ ]:
 
