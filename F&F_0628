@@ -1,0 +1,695 @@
+# -*- coding: utf-8 -*-
+
+
+#!/usr/bin/env python
+# coding: utf-8
+
+# # 股票数据整理（6.7）
+
+# In[56]:
+
+
+# conda install rpy2
+
+
+# In[1]:
+
+
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+import matplotlib.pyplot as plt
+# import rpy2
+# import rpy2.robjects as robjects
+from rpy2.robjects.packages import importr
+from sklearn.utils import resample
+#from rpy2.robjects import r
+from rpy2.robjects import pandas2ri
+
+pandas2ri.activate()
+#robjects.globalenv['dataframe'] = dataframe
+
+
+# dt1 = pd.read_csv('股票数据/行情序列2001年周数据.csv')
+# dt2 = pd.read_csv('股票数据/行情序列2002年周数据.csv')
+# dt3 = pd.read_csv('股票数据/行情序列2003年周数据.c1sv')
+# dt4 = pd.read_csv('股票数据/行情序列2004-5年周数据.csv')
+# dt5 = pd.read_csv('股票数据/行情序列2006-2009年周数据.csv')
+# dt6 = pd.read_csv('股票数据/行情序列2010-2013年周数据.csv')
+# dt7 = pd.read_csv('股票数据/行情序列2014-2018年周数据.csv')
+
+# dt = pd.concat([dt1,dt2,dt3,dt4,dt5,dt6,dt7], axis = 0, ignore_index = True)
+
+# dt_na = dt.dropna()
+
+# dt_na
+
+# dt.shape
+
+# dt_na.shape
+
+# dt_na.to_csv('数据已合并.csv', index = False, encoding='utf_8_sig')
+
+# # 数据初步描述分析（6.8）
+# 
+# 见【data description script.R】文件
+# 
+# ***描述性分析结果*** 
+# 1. 一共截取328只基金的累积净值数据，运营时间最长的基金从周2005/1/7 - 周2018/12/28，包含715个数据点，有85%的基金单支拥有50 ~ 400个数据点, 其中有25.8%的基金单支拥有200~250个数据点。
+# 2. 由04年至18年，每年数据点数量由最初的1个（仅2004/12/31, 上证500ETF一支）至15674个逐年增多。
+# 3. 由04年至18年，基金数量由最初的1支至328支逐年增多，13年基金数量超过100支，14年后基金数量猛增。
+# 
+
+# # 数据在模型Kosowski、Fama&French的抽样试验（6.9 - 6.15）
+
+# In[2]:
+
+
+# 基金数据导入
+funds = pd.read_csv('funds_data.csv')
+
+
+# In[3]:
+
+print('\n', 'funds.shape:', '\n', funds.shape)
+
+print("{:-^50s}".format("Split Line"))
+
+
+# In[4]:
+
+print('\n', 'funds.head(5):', '\n', funds.head(5))
+
+print("{:-^50s}".format("Split Line"))
+
+# In[5]:
+
+print('\n', 'funds.info():', '\n', funds.info())
+
+print("{:-^50s}".format("Split Line"))
+
+# In[6]:
+
+
+# 基金回报率计算
+funds['单位净值(初)']=funds.groupby('代码')['周单位净值(元)'].shift(1)
+funds['净回报率'] = funds['周单位净值(元)']/funds['单位净值(初)'] - 1
+
+print('\n', 'funds[单位净值(初)]:', '\n', funds['单位净值(初)'])
+print('\n', 'funds[净回报率]:', '\n', funds['净回报率'])
+
+print("{:-^50s}".format("Split Line"))
+
+# In[7]:
+
+#print('\n', 'funds.head(10):', '\n', funds.head(10))
+print('\n', 'funds:', '\n', funds)
+
+print("{:-^50s}".format("Split Line"))
+# In[8]:
+
+
+# Cahart模型因子数据导入
+cahart = pd.read_csv('fivefactor_weekly.csv')
+
+
+# In[9]:
+
+print('\n', 'cahart.shape:', '\n', cahart.shape)
+
+print("{:-^50s}".format("Split Line"))
+
+# In[10]:
+
+#print('\n', 'cahart.head(5):', '\n', cahart.head(5))
+print('\n', 'cahart:', '\n', cahart)
+
+print("{:-^50s}".format("Split Line"))
+
+# In[11]:
+
+print('\n', 'cahart.info():', '\n', cahart.info())
+
+print("{:-^50s}".format("Split Line"))
+
+# In[12]:
+
+
+# 时间类数据格式调整
+funds['时间'] = pd.to_datetime(funds['时间'], format='%Y-%m-%d')
+cahart['trdwk'] = pd.to_datetime(cahart['trdwk'], format='%Y-%m-%d')
+print('\n', 'funds[时间]:', '\n', funds['时间'])
+print('\n', 'cahart[trdwk]:', '\n', cahart['trdwk'])
+
+print("{:-^50s}".format("Split Line"))
+# ## Kosowaski模型（6.9 - 6.11）
+# 
+# ### 1、构建残差population
+# 
+# 按照Kosowaski模型，根据Cahart四因子模型构建各基金alpha, 周因子数据由国泰安数据库提供。
+# 
+# ##### 对齐四因子与基金周收益时间点
+# 取四因子及最长运营的基金周收益05/01/07 - 18/12/28数据进行right_join, 结果如下；
+
+# ***观察结果***：周因子数据与单支基金周净值数据存在差值，周因子数据缺失2006/10/6、2007/10/5、2009/12/31、2013/12/31四周数据，为计算alpha、载荷及残差用缺失值上值进行填补。
+# ![image.png](attachment:image.png)
+
+# #### 合并四因子与基金收益率
+
+# In[13]:
+
+
+# 取Cahart模型所需因子：市场风险因子（mkt_rf）、规模风险因子（smb）、账面市值比风险因子（hml）、惯性/动量因子（umd）及无风险利率（rf）
+c1 = cahart[(cahart['trdwk']>="2005-01-07")&(cahart['trdwk']<="2018-12-28")]
+c2 = c1[['trdwk','mkt_rf','smb','hml','umd','rf']]
+# 取基金净值有效时间段内数据
+f = funds[(funds['时间']>='2005-01-07')&(funds['时间']<='2018-12-28')]
+f = f.rename(columns = {'时间': 'trdwk'})
+# 合并因子与基金净值
+cmodel = pd.merge(f, c2, how='left', on='trdwk')
+
+
+# In[14]:
+
+
+# 处理缺失值： 用上一个非缺失值填补
+cmodel = cmodel.fillna(method='ffill')
+
+
+# In[15]:
+
+
+# 调整合并后数据列名
+cmodel = cmodel.drop(columns = ['周单位净值(元)', '单位净值(初)'])
+cmodel = cmodel.rename(columns = {'代码': 'code', '简称': 'name', '净回报率': 'ri'})
+
+
+# In[16]:
+
+#print('\n', 'cmodel.shape:', '\n', cmodel.shape)
+
+print("{:-^50s}".format("Split Line"))
+
+# In[17]:
+
+print('\n', 'cmodel:', '\n', cmodel)
+#print('\n', 'cmodel.head(5):', '\n', cmodel.head(5))
+
+print("{:-^50s}".format("Split Line"))
+
+
+# In[18]:
+
+
+# 查看净值与四因子之间相关性
+corr_dt = cmodel[3:]
+
+
+# In[19]:
+
+print('\n', '查看净值与四因子之间相关性corr_dt.corr():', '\n', corr_dt.corr())
+
+print("{:-^50s}".format("Split Line"))
+
+# #### 建立OLS回归模型
+# 
+# 根据论文描述，Kosowaski模型是对单支基金先OLS回归得到残差，再对单支基金的残差pop进行bootstrap抽样，一次bootstrap抽样能得到一组残差样本，在计算出一组伪净值数据，根据一组伪净值数据用OLS回归计算出一个伪alpha。
+# 
+# bootstrap对单支基金抽样b次能得到b个伪alpha，抽样n个基金能构成一个n乘以b的alpha分布。
+
+# In[22]:
+
+
+funds_list = cmodel.code.unique() # 基金清单
+
+
+# In[23]:
+
+
+# 多基金残差计算
+def res_caculator(f):
+    Y = f['ri']-f['rf']
+    result = sm.OLS(Y, sm.add_constant(f.loc[:, ['mkt_rf', 'smb', 'hml', 'umd']])).fit() # 净值根据Cahart四因子做线性回归
+    y_dot = result.fittedvalues # 线性方程拟合后计算净值预测值
+    res = Y - y_dot # 净值与净值预测值相减形成残差
+    # 记录回归方程中各参数取值
+    coef = {}
+    coef.update(alpha_dot = result.params[0], mkt_b = result.params[1], smb_b = result.params[2], hml_b = result.params[3],  umd_b = result.params[4])
+    
+    # 返回res计算后的单支基金数据及对应的四因子回归方程系数
+    return (res, coef) 
+
+
+# cmodel.groupby('code').apply(lambda x:)
+
+# In[24]:
+
+
+########## TEST ###########
+funds1 = cmodel[cmodel['code'] == funds_list[0]].reset_index(drop=True) # 使用基金清单中第一支基金测试以上残差计算函数
+plt1 = res_caculator(funds1)[0]
+coefs = res_caculator(funds1)[1]
+
+# print('\n', 'funds1:', '\n', funds1)
+# print('\n', 'plt1.type:', '\n', plt1.type)
+# print('\n', 'coefs:', '\n', coefs)
+
+
+print("{:-^50s}".format("Split Line"))
+# In[25]:
+
+
+########## TEST ###########
+fig = plt.figure()  # 残差计算结果，表现出四因子估计值与基金真是净值时序之间的关系 
+ax = fig.add_subplot(111)
+funds1.loc[:,'res'] = plt1
+ax.plot(funds1.trdwk, funds1.res) # 残差分布在[-0.1, 0.1]之间
+
+#print('\n', 'fig:', '\n', fig)
+#print('\n', 'ax:', '\n', ax)
+#print('\n', 'funds1.loc[:,res]:', '\n', ax)
+#plt.show()
+
+print("{:-^50s}".format("Split Line"))
+# ### 2. 构建基金回报率伪时间序列、伪Alpha计算方程 （6.15）
+# 
+# Kosowski模型创造基金回报率伪时间序列的方式是首先对残差数列进行有放回抽样，使用抽样残差数列，配合以下公式计算基金回报率伪时间序列：
+# ![image.png](attachment:image.png)
+# 
+# #### 残差抽样方程
+
+# In[40]:
+
+
+# kosowski模型针对残差的Bootstrap抽样（******* 抽样部分之后要加入最优时序分块和家族分块步骤 ********）
+# kosowski模型针对残差的Bootstrap抽样（******* 抽样部分之后要加入最优时序分块和家族分块步骤 ********）
+
+# In[46]:
+# def k_sampling0(res):
+#     # 最优时序分块采样
+#     #tseries = importr('tseries')
+#     tseries = importr('tseries')
+#     #tsbootstrap = robjects.r['tsbootstrap']()
+#     spl_res = tseries.tsbootstrap(res, nb = 1,  m = 1)
+#     spl_res = pd.Series(np.array(spl_res))
+
+#     return spl_res
+
+# def k_sampling1(res):
+#     # 最优时序分块采样
+#     #tseries = importr('tseries')
+#     tseries = importr('tseries')
+#     #tsbootstrap = robjects.r['tsbootstrap']()
+#     spl_res = tseries.tsbootstrap(res, nb = 1000, m = 1)
+#     #spl_res = np.array(spl_res)
+
+#     return spl_res
+
+def k_sampling0(res):
+    # 最优时序分块采样
+    #tseries = importr('tseries')
+    tseries = importr('tseries')
+    #tsbootstrap = robjects.r['tsbootstrap']()
+    spl_res = tseries.tsbootstrap(res, nb = 1000, m = 1)
+    spl_res0 = np.array(spl_res)
+
+    return spl_res0
+#print('\n', 'k_sampling1(plt1):', '\n', k_sampling1(plt1))
+#print('\n', 'k_sampling1(plt1).shape:', '\n', k_sampling1(plt1).shape)
+
+print("{:-^50s}".format("Split Line"))
+
+# In[27]:
+
+
+########## TEST ###########
+
+# plt1_k_sample0 = k_sampling0(plt1)
+#print('\n', 'plt1_k_sample:', '\n', plt1_k_sample)
+#print(k_sampling1(plt1))
+
+# print('\n', 'plt1_k_sample:', '\n', plt1_k_sample)
+# print('\n', 'type(plt1_k_sample):', '\n', type(plt1_k_sample))
+# print('\n', 'plt1_k_sample.shape:', '\n', plt1_k_sample.shape)
+
+print("{:-^50s}".format("Split Line"))
+
+
+
+
+
+# print('\n', 'plt1_k_sample0:', '\n', plt1_k_sample0)
+# print('\n', 'type(plt1_k_sample0):', '\n', type(plt1_k_sample0))
+# print('\n', 'plt1_k_sample0.shape:', '\n', plt1_k_sample0.shape)
+
+print("{:-^50s}".format("Split Line"))
+
+# In[48]:
+
+
+#print(k_sampling1(plt1))
+
+
+# #### 伪Alpha计算方程
+# 得到回报率伪时间序列后，再通过CahartOLS再次回归，得到该基金伪Alpha
+
+# In[28]:
+
+
+# kosowski模型抽样残差进行伪回报及伪alpha计算
+def k_fake_alpha_calculator(res, coef, cahart_factors):
+    #print('\n', 'res:', '\n', res, '\n', '^res')
+    #res = np.array(res)
+    #print('\n', 'res:', '\n', res, '\n', '^res')
+    #res = res.reset_index(drop=True)
+    # print('\n', 'cahart_factors', '\n', cahart_factors.shape)
+    # 通过残差抽样计算伪回报率
+    #fake_y = cahart_factors['mkt_rf']*coef.get('mkt_b') + cahart_factors['smb']*coef.get('smb_b') + cahart_factors['hml']*coef.get('hml_b') + cahart_factors['umd']*coef.get('umd_b') + res
+    #fake_y = np.dot(cahart_factors['mkt_rf'], coef.get('mkt_b')) + np.dot(cahart_factors['smb'], coef.get('smb_b')) + np.dot(cahart_factors['hml'], coef.get('hml_b')) + np.dot(cahart_factors['umd'], coef.get('umd_b')) + res
+    fake_y = cahart_factors['mkt_rf'] * coef.get('mkt_b')+ cahart_factors['smb'] * coef.get('smb_b') + cahart_factors['hml'] * coef.get('hml_b') + cahart_factors['umd'] * coef.get('umd_b') + res  
+    # print('\n', 'res:', '\n', res)
+    # print('\n', 'res.shape:', '\n', res.shape)
+    # print('\n', 'res.type:', '\n', type(res))
+    
+    # print('\n', 'fake_y:', '\n', fake_y)
+    # print('\n', 'fake_y.shape:', '\n', fake_y.shape)
+    # 得到伪回报率，通过伪回报率Cahart OLS回归得到基金伪Alpha.
+    
+    fake_result = sm.OLS(fake_y, sm.add_constant(cahart_factors.loc[:, 'mkt_rf':'umd'])).fit()
+    # print('\n', 'fake_result:', '\n', fake_result)
+    
+    fake_alpha = fake_result.params[0]
+    # print('\n', 'fake_alpha :', '\n', fake_alpha)
+    
+    fake_ta = fake_result.tvalues[0]
+    # print('\n', 'fake_ta:', '\n', fake_ta)
+    
+    return (fake_alpha, fake_ta) 
+  
+
+def k_fake_alpha_calculator0(res, coef, cahart_factors):
+    #print('\n', 'res:', '\n', res, '\n', '^res')
+    #res = np.array(res)
+    #print('\n', 'res:', '\n', res, '\n', '^res')
+    #res = res.reset_index(drop=True)
+    #for i in range(5)
+    # 通过残差抽样计算伪回报率
+    #fake_y = cahart_factors['mkt_rf']*coef.get('mkt_b') + cahart_factors['smb']*coef.get('smb_b') + cahart_factors['hml']*coef.get('hml_b') + cahart_factors['umd']*coef.get('umd_b') + res
+    
+    
+    
+    # print('\n', 'cahart_factors', '\n', cahart_factors.shape)
+    
+    #fake_y = np.dot(cahart_factors['mkt_rf'], coef.get('mkt_b')) + np.dot(cahart_factors['smb'], coef.get('smb_b')) + np.dot(cahart_factors['hml'], coef.get('hml_b')) + np.dot(cahart_factors['umd'], coef.get('umd_b')) + res
+    # print('\n', 'cahart_factors[mkt_rf]:', '\n', cahart_factors['mkt_rf'])
+    # print('\n', 'coef.get(mkt_b):', '\n', coef.get('mkt_b'))
+    # aaa = cahart_factors['mkt_rf'] * coef.get('mkt_b')
+    # print('\n', 'aaa:', '\n', aaa.shape)
+    # print('\n', 'res:', '\n', res.shape)
+    # #bbb = cahart_factors['smb'] * coef.get('smb_b')
+    # print('\n', 'aaa + res:', '\n', aaa + res)
+    
+    fake_y = cahart_factors['mkt_rf'] * coef.get('mkt_b')+ cahart_factors['smb'] * coef.get('smb_b') + cahart_factors['hml'] * coef.get('hml_b') + cahart_factors['umd'] * coef.get('umd_b') + res  
+    #print('\n', 'res[:,0]:', '\n', res[:,0])
+    # print('\n', 'fake_y:', '\n', fake_y)
+    # print('\n', 'fake_y.shape:', '\n', fake_y.shape)
+    # 得到伪回报率，通过伪回报率Cahart OLS回归得到基金伪Alpha.
+    
+    fake_result = sm.OLS(fake_y, sm.add_constant(cahart_factors.loc[:, 'mkt_rf':'umd'])).fit()
+    # print('\n', 'fake_result.type:', '\n', type(fake_result))
+    # print('\n', 'fake_result:', '\n', fake_result)
+    # print('\n', 'fake_result.summary():', '\n', fake_result.summary())
+   
+    
+    fake_alpha = fake_result.params[2]
+#    fake_alpha = fake_alpha[0]
+    # print('\n', 'fake_result.params[1] :', '\n', fake_result.params[1])
+    # print('\n', 'fake_alpha :', '\n', fake_alpha)
+    
+    fake_ta = fake_result.tvalues[0]
+    # print('\n', 'fake_ta:', '\n', fake_ta)
+    
+    return (fake_alpha, fake_ta)
+
+
+# In[29]:
+
+
+########## TEST ###########
+
+# print('\n', 'plt1_k_sample0[:,0]:', '\n', plt1_k_sample0[:,0].shape)
+
+# res = plt1_k_sample0[:,0]
+#print('\n', 'res.shape:', '\n', type(res))
+
+
+# kfac0 = k_fake_alpha_calculator0(res, coefs, funds1)
+#print('\n', 'k_fake_alpha_calculator1:', '\n', kfac0)
+
+
+        
+print("{:-^50s}".format("Split Line"))
+# ### 3. 计算运气Alpha分布 （6.15 - 6.16）
+# 
+# ！**目前思路**
+# 1. 计算所有基金真实alpha【alpha】及其alpha的t-test值【ta】，对真实alpha进行排序；
+# 2. 计算一次所有基金伪alpha【fk_alpha】及其对应的t-test值，并对fk_alpha排序，记为Series1；
+# 3. 重复1000次伪alpha序列计算，得到1000个Series.
+# 4. 计算1000个Series每个rank(length：328)上的t-test平均数【mean_tfa】
+# 5. 在每个rank上，计算【alpha】在1000个【fk_alpha】构成的【运气alpha分布】上小于其的百分比，记为【%<Act】
+
+# In[30]:
+
+
+cmodel.head(10)
+#print('\n', 'cmodel.head(10):', '\n', cmodel.head(10))
+
+# In[31]:
+
+
+# 第一步：计算所有基金真实Alpha并排序 #
+alpha = []
+ta = []
+
+for fund in funds_list:
+    tmp_f = cmodel[cmodel['code'] == fund].reset_index(drop=True)
+    X = tmp_f.loc[:, 'mkt_rf':'umd']
+    Y = tmp_f.ri - tmp_f.rf
+    
+    true_ols = sm.OLS(Y, sm.add_constant(X)).fit()
+    alpha_i = true_ols.params[0]
+    ta_i = true_ols.tvalues[0]
+    
+    alpha.append(alpha_i)
+    ta.append(ta_i) 
+
+#print('\n', 'alpha:', '\n', alpha)
+#print('\n', 'ta:', '\n', ta)
+
+print("{:-^50s}".format("Split Line"))
+# In[32]:
+
+
+# alpha及其t-value数列的排序及整理方程
+# def series_manipulator(alpha, ta):
+#     # 将两个List合并到一起，按alpha排序
+#     alpha = np.array(alpha).reshape(len(alpha),1)
+#     ta = np.array(ta).reshape(len(ta),1)
+
+#     one_fund_array = np.hstack([alpha, ta])
+#     one_fund_array = one_fund_array[np.argsort(one_fund_array[:,0]),:]
+    
+#     # 将排好序的alpha和其t-value分开，变成两个二维数组
+#     one_fund_list = np.hsplit(one_fund_array,2)
+    
+#     return one_fund_list
+
+
+# In[33]:
+
+
+# 排序
+# true_alpha_series = series_manipulator(alpha, ta)
+# print('\n', 'true_alpha_series.type:', '\n', type(true_alpha_series))
+
+#print('\n', 'true_alpha_series:', '\n', true_alpha_series)
+# true_alpha_series[0][:5]
+# # ! **算力不足问题**
+# 目前伪Alpha计算并排序的步骤循环5次大约需要1分钟，20次大约需要4分半，预计如需循环计算1000次需要3~4个小时
+
+print("{:-^50s}".format("Split Line"))
+# In[42]:
+
+
+# 第三步：重复计算所有基金伪Alpha series并排序 #
+
+
+
+fk_alpha_all = []
+fk_ta_all = [] 
+    
+    # 第二步：计算所有基金伪Alpha并排序，记为Series1 #
+# for fund in funds_list[:1]:
+#         fk_alpha = []
+#         fk_ta = [] 
+#         tmp_f = cmodel[cmodel['code'] == fund].reset_index(drop=True)
+#         #print('\n', 'tmp_f:', '\n', tmp_f)
+#         tmp_cahart = tmp_f.loc[:, 'mkt_rf':'umd']   # 当前基金对应的Cahart四因子数据
+#         #print('\n', 'tmp_cahart:', '\n', tmp_cahart)
+        
+#         tmp_res = res_caculator(tmp_f) # 计算单支基金四因子回归模型的残余
+#         #print('\n', 'tmp_res:', '\n',tmp_res)
+#         coef = tmp_res[1] # 当前基金Cahart OLS回归后各因子参数
+#         #print('\n', 'coef:', '\n', coef)
+        
+#         #  当前基金残余Bootstrap抽样
+#         #print('\n', 'tmp_res[0]:', '\n', tmp_res[0].shape)
+#         bootstrap_res = k_sampling0(tmp_res[0])
+        
+#         for t in range(bootstrap_res.shape[1]):
+#             res1 = bootstrap_res[:,t]
+#         #  计算单次抽样res产生的伪净值序列
+#             fk_data = k_fake_alpha_calculator(res1, coef, tmp_cahart) 
+#             fk_alpha_i = fk_data[0]
+#             fk_ta_i = fk_data[1]
+    
+#             fk_alpha.append(fk_alpha_i)
+#             fk_ta.append(fk_ta_i)
+   
+#         fk_alpha_all.append(fk_alpha)
+#         fk_ta_all.append(fk_ta) 
+
+
+# In[44]:
+
+# print('\n', 'fk_alpha_all:', '\n', fk_alpha_all)
+# print('\n', 'fk_ta_all:', '\n', fk_ta_all)
+
+# print('\n', 'fk_alpha_all.shape:', '\n', len(fk_alpha_all), '\n', type(fk_alpha_all))
+# print('\n', 'fk_ta_all.shape:', '\n', len(fk_ta_all), '\n', type(fk_alpha_all))
+
+
+# In[45]:
+# 第一步：计算真实Alpha的估计值
+funds_list
+alpha = np.array(alpha).reshape(328,)
+ta = np.array(ta).reshape(328,)
+
+df ={'code':funds_list, 'alpha':alpha, 'ta':ta }
+df = pd.DataFrame(df)
+
+fmodel = pd.merge(cmodel, df, on='code')
+
+
+# 第二步：计算基金伪回报率
+fmodel['fk_r'] = fmodel['ri'] - fmodel['alpha']
+fmodel.head(5)
+# print('\n', 'fmodel:', '\n', fmodel.head(5))
+# 第三步：按时间截面进行Bootstrap Sampling
+# 按月份对每支基金回报率进行整理
+fmodel_1 = fmodel[['trdwk','code','fk_r']]
+print('\n', 'fmodel_1:', '\n', fmodel_1)
+print('\n', 'c2:', '\n', c2)
+
+def f_sampling0(res):
+    # 最优时序分块采样
+    #tseries = importr('tseries')
+    tseries = importr('tseries')
+    #tsbootstrap = robjects.r['tsbootstrap']()
+    spl_res = tseries.tsbootstrap(res, nb = 2, m = 1)
+    spl_res0 = np.array(spl_res)
+
+    return spl_res0
+
+def f_sampling(fk_r_df, c_factors):
+    time = pd.DataFrame(fk_r_df['trdwk'].unique()).sort_values(by=0).reset_index(drop = True) # 保留原始时序标签
+    # print('\n', 'time:', '\n', time)
+    
+    # 窄表变宽表
+    f_spl = fk_r_df.pivot_table(index='trdwk',
+                                columns = 'code',
+                                values = 'fk_r') # 行-时间，列-所有基金，单元格表示一只基金在一个时间点的伪回报率（回报减去alpha）
+    # 去掉宽表中的多层索引
+    f_spl1 = np.array(f_spl)
+    columns = f_spl.columns.values
+    f_spl_df = pd.DataFrame(f_spl1, columns = columns).fillna(0) # 补足某些基金在早期时间点上的NaN
+    # print('\n', 'f_spl_df:', '\n', f_spl_df)
+    
+    # 按时间进行抽样
+    
+    
+    n = pd.Series(range(len(f_spl_df)))
+    # print('\n', 'n:', '\n', n)
+    
+    
+    
+    f_spl_df_b = f_spl_df.iloc[f_sampling0(n)].reset_index(drop=True) # 抽样完成后将打乱顺序的伪时间序列重新排序
+    # print('\n', 'f_spl_df_b:', '\n', f_spl_df_b)
+ 
+   
+    
+    
+    # 宽表变窄表
+    f_spl_df_b_wide = pd.merge(f_spl_df_b,time, left_index = True, right_index=True).rename(columns = {0:'trdwk'})
+    f_spl_df_b_long = f_spl_df_b_wide.set_index('trdwk').stack().reset_index()
+    f_spl_df_b_long.columns = ['trdwk', 'code', 'fk_ri']
+    
+    # 抽样完成后与真实时间轴上的Cahart四因子按按时间索引进行合并
+    c_factors.reset_index(drop=True)
+    f_spl_df1 = pd.merge(f_spl_df_b_long, c_factors, how='left', on='trdwk').fillna(method='ffill')
+    
+    return f_spl_df1
+
+f = f_sampling(fmodel_1,c2)
+f.head(5)
+print('\n', 'f.head(5):', '\n', f.head(5))
+
+def series_manipulator(alpha, ta):
+    # 将两个List合并到一起，按alpha排序
+    alpha = np.array(alpha).reshape(len(alpha),10)
+    ta = np.array(ta).reshape(len(ta),10)
+
+    one_fund_array = np.hstack([alpha, ta])
+    one_fund_array = one_fund_array[np.argsort(one_fund_array[:,0]),:]
+    
+    # 将排好序的alpha和其t-value分开，变成两个二维数组
+    one_fund_list = np.hsplit(one_fund_array,2)
+    
+    return one_fund_list
+
+f_fk_alpha = []
+f_fk_ta = []
+
+for f in funds_list[:10]:
+    tmp_f = f_sampling(fmodel_1, c2)
+    Y=tmp_f['fk_ri'] - tmp_f['rf']
+    X=tmp_f.loc[:, 'mkt_rf':'umd']
+    fake_result = sm.OLS(Y, sm.add_constant(X)).fit()
+    fk_alpha_i = fake_result.params[0]
+    fk_ta_i = fake_result.tvalues[0]
+    
+    f_fk_alpha.append(fk_alpha_i)
+    f_fk_ta.append(fk_ta_i)
+
+all_alpha_series = []
+all_ta_series = []
+
+for a,ta in zip(f_fk_alpha,f_fk_ta):
+    one_series_array = np.vstack((a,ta))
+    one_series_array1 = one_series_array.T
+    one_series_df = pd.DataFrame(one_series_array1)
+    one_series_df = one_series_df.sort_values(by = 0)
+    
+    alpha_series_i = one_series_df[0]
+    ta_series_i = one_series_df[1]
+    all_alpha_series.append(np.array(alpha_series_i))
+    all_ta_series.append(np.array(ta_series_i))
+    
+ta_series_matrix = np.vstack(all_ta_series).T
+sim_ta_series = ta_series_matrix.mean(axis = 1)
+
+print('\n', 'all_alpha_series:', '\n', all_alpha_series)
+print('\n', 'all_ta_series:', '\n', all_ta_series)
+
+ta_series_matrix.mean(axis = 1)
+print('\n', 'ta_series_matrix.mean(axis = 1):', '\n', ta_series_matrix.mean(axis = 1))
