@@ -19,96 +19,100 @@ pandas2ri.activate()
 
 # In[6]:
 
+####### 已经在DataCleaning.ipynb文件中完成数据合并及格式调整
+fmodel = pd.read_csv('model_data180630.csv')
+fmodel.head(5)
+## 基金数据导入
+#funds = pd.read_csv('funds_data.csv')
+## Cahart模型因子数据导入
+#cahart = pd.read_csv('fivefactor_weekly.csv')
+#
+#
+## 数据调整
+#
+## In[7]:
+#
+#
+## 时间类数据格式调整
+#funds['时间'] = pd.to_datetime(funds['时间'], format='%Y-%m-%d')
+#cahart['trdwk'] = pd.to_datetime(cahart['trdwk'], format='%Y-%m-%d')
+#
+#
+## In[8]:
+#
+#
+## 基金回报率计算
+#funds['单位净值(初)']=funds.groupby('代码')['周单位净值(元)'].shift(1)
+#funds['净回报率'] = funds['周单位净值(元)']/funds['单位净值(初)'] - 1
+#
+#
+## In[9]:
+#
+#
+## 取Cahart模型所需因子：市场风险因子（mkt_rf）、规模风险因子（smb）、账面市值比风险因子（hml）、\
+##                    惯性/动量因子（umd）及无风险利率（rf）
+#c1 = cahart[(cahart['trdwk']>="2005-01-07")&(cahart['trdwk']<="2018-12-28")]
+#c2 = c1[['trdwk','mkt_rf','smb','hml','umd','rf']]
+## 取基金净值有效时间段内数据
+#f = funds[(funds['时间']>='2005-01-07')&(funds['时间']<='2018-12-28')]
+#f = f.rename(columns = {'时间': 'trdwk'})
+## 合并因子与基金净值
+#cmodel = pd.merge(f, c2, how='left', on='trdwk')
+#
+#
+## In[10]:
+#
+#
+## 处理缺失值： 用上一个非缺失值填补
+#cmodel = cmodel.fillna(method='ffill')
+#
+#
+## In[11]:
+#
+#
+## 调整合并后数据列名
+#cmodel = cmodel.drop(columns = ['周单位净值(元)', '单位净值(初)'])
+#cmodel = cmodel.rename(columns = {'代码': 'code', '简称': 'name', '净回报率': 'ri'})
+#
+#
+## In[12]:
+#
+#
+#cmodel.head()
+#
+#
+## 计算基金池内各基金真实Alpha的估计值并排序（使用Cahart四因子OLS回归模型）
+#
+## In[13]:
+#
+fmodel = fmodel.groupby("fund_id").filter(lambda x: (len(x) > 100))
 
-# 基金数据导入
-funds = pd.read_csv('funds_data.csv')
-# Cahart模型因子数据导入
-cahart = pd.read_csv('fivefactor_weekly.csv')
-
-
-# 数据调整
-
-# In[7]:
-
-
-# 时间类数据格式调整
-funds['时间'] = pd.to_datetime(funds['时间'], format='%Y-%m-%d')
-cahart['trdwk'] = pd.to_datetime(cahart['trdwk'], format='%Y-%m-%d')
-
-
-# In[8]:
-
-
-# 基金回报率计算
-funds['单位净值(初)']=funds.groupby('代码')['周单位净值(元)'].shift(1)
-funds['净回报率'] = funds['周单位净值(元)']/funds['单位净值(初)'] - 1
-
-
-# In[9]:
-
-
-# 取Cahart模型所需因子：市场风险因子（mkt_rf）、规模风险因子（smb）、账面市值比风险因子（hml）、\
-#                    惯性/动量因子（umd）及无风险利率（rf）
-c1 = cahart[(cahart['trdwk']>="2005-01-07")&(cahart['trdwk']<="2018-12-28")]
-c2 = c1[['trdwk','mkt_rf','smb','hml','umd','rf']]
-# 取基金净值有效时间段内数据
-f = funds[(funds['时间']>='2005-01-07')&(funds['时间']<='2018-12-28')]
-f = f.rename(columns = {'时间': 'trdwk'})
-# 合并因子与基金净值
-cmodel = pd.merge(f, c2, how='left', on='trdwk')
-
-
-# In[10]:
-
-
-# 处理缺失值： 用上一个非缺失值填补
-cmodel = cmodel.fillna(method='ffill')
-
-
-# In[11]:
-
-
-# 调整合并后数据列名
-cmodel = cmodel.drop(columns = ['周单位净值(元)', '单位净值(初)'])
-cmodel = cmodel.rename(columns = {'代码': 'code', '简称': 'name', '净回报率': 'ri'})
-
-
-# In[12]:
-
-
-cmodel.head()
-
-
-# 计算基金池内各基金真实Alpha的估计值并排序（使用Cahart四因子OLS回归模型）
-
-# In[13]:
-
-fmodel = cmodel.groupby("code").filter(lambda x: (len(x) > 50))
-funds_list = fmodel.code.unique() # 基金清单
+funds_list = fmodel.fund_id.unique() # 基金清单
+c2 = fmodel[['trddy', 'mkt_rf', 'smb', 'hml', 'umd', 'rbrf', 'rf']].drop_duplicates()
 
 # In[14]:
 
 
-alpha = []
-ta = []
+t_alpha = []
+t_ta = []
 
 for fund in funds_list:
-    tmp_f = cmodel[cmodel['code'] == fund].reset_index(drop=True)
-    X = tmp_f.loc[:, 'mkt_rf':'umd']
+    tmp_f = fmodel[fmodel['fund_id'] == fund].reset_index(drop=True)
+    X = tmp_f.loc[:, 'mkt_rf':'rbrf']
     Y = tmp_f.ri - tmp_f.rf
     
     true_ols = sm.OLS(Y, sm.add_constant(X)).fit()
     alpha_i = true_ols.params[0]
     ta_i = true_ols.tvalues[0]
     
-    alpha.append(alpha_i) # 每只基金的真实Alpha(使用OLS回归后的估计值)
-    ta.append(ta_i) # Alpha估计值的t-value
+    t_alpha.append(alpha_i) # 每只基金的真实Alpha(使用OLS回归后的估计值)
+    t_ta.append(ta_i) # Alpha估计值的t-value
 
 
 # In[15]:
 
 
-print("alpha:", alpha[:5],"\n","ta:",ta[:5])
+print("alpha:", t_alpha[:5],"\n","ta:",t_ta[:5])
 
 
 # ## Fama&French模型（6.18 - 6.24）
@@ -128,11 +132,11 @@ funds_list
 # ta = np.array(ta).reshape(328,)
 
 # 转换成数据表格
-df ={'code':funds_list, 'alpha':alpha, 'ta':ta }
+df ={'fund_id':funds_list, 'alpha':t_alpha, 'ta':t_ta }
 df = pd.DataFrame(df)
 
 # 与cahart四因子数据合并
-fmodel = pd.merge(cmodel, df, on='code')
+fmodel = pd.merge(fmodel, df, on='code')
 
 # 计算基金的伪回报率
 fmodel['fk_r'] = fmodel['ri'] - fmodel['alpha']
@@ -147,11 +151,11 @@ fmodel.head(5)
 
 def long_to_wide_f(fk_r_df):
     # 保留原始时序标签
-    time = pd.DataFrame(fk_r_df['trdwk'].unique()).sort_values(by=0).reset_index(drop=True) 
+    time = pd.DataFrame(fk_r_df['trddy'].unique()).sort_values(by=0).reset_index(drop=True)
 
     # 行-时间，列-所有基金，单元格表示一只基金在一个时间点的伪回报率（回报减去alpha）
-    f_spl = fk_r_df.pivot_table(index='trdwk',
-                                columns = 'code',
+    f_spl = fk_r_df.pivot_table(index='trddy',
+                                columns = 'fund_id',
                                 values = 'fk_r') 
 
     # 去掉宽表中的多层索引
@@ -165,7 +169,7 @@ def long_to_wide_f(fk_r_df):
 # In[18]:
 
 
-fmodel_1 = fmodel[['trdwk','code','fk_r']]
+fmodel_1 = fmodel[['trddy','fund_id','fk_r']]
 f_spl_df = long_to_wide_f(fmodel_1)
 
 
@@ -201,11 +205,11 @@ def f_sampling(f_spl_df):
 def f_ols_caculator(df_wide, time, c_factors):
     
     # 宽表加上短时间格式的时间戳（由[0,715]变成['2005-1-7', '2018-12-31']）
-    df_wide0 = pd.merge(df_wide,time,left_index = True,right_index=True).rename(columns = {0:'trdwk'})
+    df_wide0 = pd.merge(df_wide,time,left_index = True,right_index=True).rename(columns = {0:'trddy'})
     
     # 与cahart周频四因子数据合并
     c_factors.reset_index(drop=True)
-    df_wide1 = pd.merge(df_wide0, c_factors, how='left', on='trdwk').fillna(method='ffill').set_index('trdwk')
+    df_wide1 = pd.merge(df_wide0, c_factors, how='left', on='trddy').fillna(method='ffill').set_index('trddy')
 
     return df_wide1
 
@@ -248,7 +252,7 @@ for i in spl_f1:
     f_fk_ta = []
     for fund in funds_list:
         Y = f_spl_df_ols[fund] - f_spl_df_ols['rf']
-        X = f_spl_df_ols.loc[:,'mkt_rf':'umd']
+        X = f_spl_df_ols.loc[:,'mkt_rf':'rbrf']
         fake_result = sm.OLS(Y, sm.add_constant(X)).fit()
         fk_alpha_i = fake_result.params[0]
         fk_ta_i = fake_result.tvalues[0]
@@ -268,8 +272,8 @@ for i in spl_f1:
 # In[23]:
 
 
-true_funds_dt = series_manipulator(alpha,ta)
-t_ta = np.array(true_funds_dt[1]).flatten() # EXP: t_ta.shape = (328,)
+true_funds_dt = series_manipulator(t_alpha,t_ta)
+act = np.array(true_funds_dt[1]).flatten() # EXP: t_ta.shape = (328,)
 
 
 # 2. 对伪alpha数组计算t-value在每个alpha level的平均值
@@ -308,7 +312,7 @@ print(len(perc_act), perc_act[:10]) # EXP: len(perc_act) = len(funds_list) = 328
 # In[24]:
 
 
-mydict = {'Act': t_ta,
+mydict = {'Act': act,
           'Mean.Sim': sim_ta,
           'Perc_less_than_Act': perc_act
          }
